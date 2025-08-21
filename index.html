@@ -43,7 +43,14 @@
   .header { width:100%; display:flex; gap:16px; align-items:center; justify-content:center; flex-direction:column; }
   .avatar { width:96px; height:96px; border-radius:12px; overflow:hidden; border:2px solid rgba(0,255,106,0.12); box-shadow: 0 4px 20px rgba(0,255,106,0.04); }
   .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+
+  /* Title now holds the typing element and cursor */
   .title { display:flex; align-items:center; gap:12px; color:var(--neon); letter-spacing:1px; font-size:28px; text-shadow: 0 0 10px rgba(0,255,106,0.26), 0 0 24px rgba(0,255,106,0.06); margin-top:6px; justify-content:center; }
+  .title #logoText { color:var(--neon); font-weight:800; font-family:"XTerminus", monospace; }
+  .title .cursor { display:inline-block; width:10px; height:1.06em; background:var(--neon); margin-left:8px; vertical-align:bottom; animation:blinkCursor 900ms steps(2,start) infinite; border-radius:2px; box-shadow:0 0 8px rgba(0,255,106,0.8); }
+
+  @keyframes blinkCursor{0%{opacity:1}50%{opacity:0}100%{opacity:1}}
+
   .subtitle { color:var(--muted); font-size:12px; letter-spacing:2px; text-transform:uppercase; margin-top:2px; opacity:0.8; }
   .icon-row { display:flex; gap:10px; align-items:center; justify-content:center; opacity:0.95; }
 
@@ -108,7 +115,12 @@
       <div class="avatar" title="Avatar">
         <img src="https://github.com/itsjustragic/social/raw/main/IMG_9623.jpg" alt="avatar"/>
       </div>
-      <div class="title">ItzJusTragic</div>
+
+      <!-- TYPING TITLE: replaced static text with typing span + cursor -->
+      <div class="title" aria-live="polite" aria-atomic="true">
+        <span id="logoText"></span><span class="cursor" id="logoCursor" aria-hidden="true"></span>
+      </div>
+
       <div class="subtitle">Streamer &amp; Content Creator</div>
 
       <div class="icon-row" style="margin-top:8px;">
@@ -263,22 +275,15 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
   const volumeSlider = document.getElementById('volumeSlider');
   const volLabel = document.getElementById('volLabel');
 
-  // ---------------- CONFIG: candidate sources (ordered by preference)
-  // put as many as you want — if there are multiple playable candidates, the script will
-  // use them as a playlist (looping). If only one candidate, it behaves as single source.
   const CANDIDATES = [
     { url: 'https://r2.guns.lol/7fdd2ffd-dcaa-41d0-93b1-5e4bc914206d.mp3', type: 'audio/mpeg' },
     { url: 'https://r2.guns.lol/97f40c6a-2261-4e77-8961-927cb56957e5.mp3', type: 'audio/mpeg' },
   ];
 
-  // If you prefer single mode even with multiple candidates, set PLAY_MODE = 'single'
-  // If you want playlist behavior set to 'playlist' (default auto chooses playlist if >1)
-  let PLAY_MODE = 'playlist'; // 'auto' | 'single' | 'playlist'
-
-  audio.loop = true; // note: in playlist mode we override loop behavior per-track by listening to 'ended'
+  let PLAY_MODE = 'playlist';
+  audio.loop = true;
   audio.preload = 'auto';
 
-  // small toast helper
   function showToast(msg, t=2200){
     let el = document.getElementById('bio-toast');
     if(!el){
@@ -302,7 +307,6 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
     setTimeout(()=> el.style.opacity = '0', t);
   }
 
-  // update volume UI -> audio
   function setVolume(v){
     audio.volume = v;
     volLabel.textContent = Math.round(v*100) + '%';
@@ -311,24 +315,13 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
   setVolume(parseFloat(volumeSlider.value || 0.32));
   volumeSlider.addEventListener('input', e => setVolume(parseFloat(e.target.value)));
 
-  // diagnostics listeners
   audio.addEventListener('error', () => {
     console.error('Audio error event:', audio.error);
     showToast('Audio error — check console', 2800);
   });
-  audio.addEventListener('stalled', ()=> console.warn('Audio stalled'));
-  audio.addEventListener('abort', ()=> console.warn('Audio aborted'));
-  audio.addEventListener('emptied', ()=> console.warn('Audio emptied'));
-  audio.addEventListener('canplaythrough', ()=> console.log('canplaythrough fired — good'));
-  audio.addEventListener('loadedmetadata', ()=> console.log('loadedmetadata'));
 
-  // playlist state
-  let playlist = [];          // array of URLs selected as playable
-  let currentIndex = 0;       // current track index
-  let playlistMode = false;   // whether we're treating playlist behavior
-  let endedListener = null;
+  let playlist = []; let currentIndex = 0; let playlistMode = false; let endedListener = null;
 
-  // Checks whether the browser can decode the given MIME
   function mimeSupported(mime){
     try {
       const r = audio.canPlayType(mime);
@@ -338,80 +331,52 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
     }
   }
 
-  // Try to set working sources from candidates.
-  // Returns array of candidate URLs that passed quick checks (HEAD ok or extension ok and mimeSupported).
   async function findAndLoadSources(){
-    // We will not append multiple <source> elements to <audio> here — instead we build the playlist array
     const loaded = [];
-
     for(const c of CANDIDATES){
-      // if a candidate has no url skip
       if(!c || !c.url) continue;
-
       if(!mimeSupported(c.type)){
         console.info('Skipping candidate (mime not supported by browser):', c.url, c.type);
         continue;
       }
-
-      // quick HEAD check where possible
       let ok = true;
       try {
         const res = await fetch(c.url, { method: 'HEAD', cache: 'no-cache' });
         if(!res.ok){
           console.warn('HEAD failed for', c.url, 'status', res.status);
           ok = false;
-        } else {
-          // optional content-type sanity check
-          const ct = res.headers.get('Content-Type') || '';
-          if(ct && !ct.includes('audio') && !ct.includes('octet-stream')){
-            console.warn('HEAD returned unexpected Content-Type for', c.url, ct);
-            // still allow - sometimes hosts misreport; we'll accept if extension present
-          }
         }
       } catch(err){
-        // HEAD might fail due to CORS or network — still attempt to include candidate for a later play attempt
         console.info('HEAD request failed (CORS/network) for', c.url, err);
       }
-
       if(!ok) continue;
-
-      // quick attempt to load metadata by assigning src to a temp audio element? To avoid interfering with main audio,
-      // we will accept the candidate and defer real loading to playback time. This keeps things responsive.
       loaded.push(c.url);
     }
-
     return loaded;
   }
 
-  // set current audio.src to url and attach handlers
   function setAudioSrc(url){
-    // remove any <source> children to prevent conflict
     Array.from(audio.querySelectorAll('source')).forEach(s => s.remove());
     audio.src = url;
     try { audio.load(); } catch(e) { console.warn('audio.load() threw', e); }
   }
 
-  // Advance playlist index (with looping)
   function advanceIndex(){
     if(playlist.length === 0) return;
     currentIndex = (currentIndex + 1) % playlist.length;
   }
 
-  // Prepare ended listener for playlist behavior
   function preparePlaylistEndedHandler(){
-    // remove existing
     if(endedListener) {
       audio.removeEventListener('ended', endedListener);
       endedListener = null;
     }
     endedListener = async () => {
-      // advance and play next track
       advanceIndex();
       const next = playlist[currentIndex];
       console.log('Playlist advancing to', currentIndex, next);
       try {
         setAudioSrc(next);
-        // attempt to play next (no toast on success)
         await audio.play();
       } catch(err){
         console.warn('Failed to play next track in playlist:', err);
@@ -421,38 +386,28 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
     audio.addEventListener('ended', endedListener);
   }
 
-  // Attempt to play in response to a user gesture (enter click)
   async function playFromUserGesture(){
     try {
-      // select playable sources
       const chosen = await findAndLoadSources();
       if(!chosen || chosen.length === 0){
         console.error('No supported audio sources found from candidates.');
         showToast('No supported audio source found.', 3800);
         return false;
       }
-
-      // Decide play mode
       if(PLAY_MODE === 'auto'){
         playlistMode = chosen.length > 1;
       } else {
         playlistMode = (PLAY_MODE === 'playlist');
       }
-
-      // Set playlist
-      playlist = chosen.slice(); // copy
+      playlist = chosen.slice();
       currentIndex = 0;
-
       if(playlistMode){
-        // Playlist: play first track, attach ended handler to loop through
         const first = playlist[currentIndex];
         setAudioSrc(first);
-        // ensure we handle ended event to advance
         preparePlaylistEndedHandler();
         audio.muted = false;
         try {
           await audio.play();
-          // success — per request: DO NOT show the "Audio started" toast here
           console.log('Playlist playback started, track 0:', first);
           return true;
         } catch(playErr){
@@ -461,10 +416,8 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
           return false;
         }
       } else {
-        // Single: set audio.src to first candidate and play
         const first = playlist[0];
         setAudioSrc(first);
-        // remove any playlist ended handler if one exists
         if(endedListener){
           audio.removeEventListener('ended', endedListener);
           endedListener = null;
@@ -472,7 +425,6 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
         audio.muted = false;
         try {
           await audio.play();
-          // success — DO NOT show "Audio started" toast per request
           console.log('Single-source playback started:', first);
           return true;
         } catch(playErr){
@@ -488,7 +440,6 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
     }
   }
 
-  // A helper to "unlock" audio via WebAudio (useful for future in-page sound effects)
   let audioUnlocked = false;
   async function unlockAudioOnGesture(){
     if(audioUnlocked) return;
@@ -497,7 +448,6 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
       if(!AC){ audioUnlocked = true; return; }
       const ctx = new AC();
       if(ctx.state === 'suspended') await ctx.resume();
-      // play a silent buffer to unlock
       const b = ctx.createBuffer(1, 1, 22050);
       const src = ctx.createBufferSource();
       src.buffer = b;
@@ -512,13 +462,10 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
   }
   document.body.addEventListener('pointerdown', unlockAudioOnGesture, {once:true, passive:true});
 
-  // Expose for debugging
   window._bio_audio = audio;
   window._bio_audio_findAndLoad = findAndLoadSources;
   window._bio_audio_playFromUserGesture = playFromUserGesture;
 
-  // If you want an initial click anywhere to try play (but the enter button is preferred),
-  // this will attempt a play if user clicks page after the overlay is hidden
   document.body.addEventListener('click', async function onBodyClick(){
     if(audio.paused && document.getElementById('enterOverlay') && document.getElementById('enterOverlay').classList.contains('hidden')){
       try { await playFromUserGesture(); } catch(e){ console.warn('body click play failed', e); }
@@ -645,14 +592,12 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
     });
 
     try {
-      // This function performs candidate selection + load then plays.
       if(window._bio_audio_playFromUserGesture){
         const ok = await window._bio_audio_playFromUserGesture();
         if(!ok){
           showToastInline('Audio could not be started. See console for details.');
         }
       } else {
-        // Fallback: attempt a simple play on the <audio> element
         const audio = window._bio_audio || document.getElementById('bg-audio');
         try { await audio.play(); } catch(e){ console.warn('Playback attempt failed:', e); showToastInline('Autoplay blocked — interact to start audio.'); }
       }
@@ -688,6 +633,38 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
 })();
 </script>
 
+<!-- ============== TYPING EFFECT FOR TITLE ============== -->
+<script>
+/* TypeLoop adapted from the shop code: continuous type + delete loop */
+(function titleTyping(){
+  const TEXT = 'ItzJusTragic';
+  const tEl = document.getElementById('logoText');
+  const cEl = document.getElementById('logoCursor');
+  if(!tEl || !cEl) return;
+
+  tEl.style.color = 'var(--neon)';
+
+  function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+  async function typeLoop(text, typeSpeed=90, pauseAfter=900, deleteSpeed=40){
+    while(true){
+      for(let i=1;i<=text.length;i++){
+        tEl.textContent = text.slice(0,i);
+        await sleep(typeSpeed + Math.round(Math.random()*20 - 10));
+      }
+      await sleep(pauseAfter + Math.round(Math.random()*200));
+      for(let i=text.length;i>=0;i--){
+        tEl.textContent = text.slice(0,i);
+        await sleep(deleteSpeed + Math.round(Math.random()*20 - 10));
+      }
+      await sleep(220 + Math.round(Math.random()*200));
+    }
+  }
+
+  // Start the typing loop (non-blocking)
+  typeLoop(TEXT, 90, 900, 40).catch(()=>{});
+})();
+</script>
+
 </body>
 </html>
-
