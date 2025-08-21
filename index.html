@@ -272,7 +272,7 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
 
   // If you prefer single mode even with multiple candidates, set PLAY_MODE = 'single'
   // If you want playlist behavior set to 'playlist' (default auto chooses playlist if >1)
-  let PLAY_MODE = 'auto'; // 'auto' | 'single' | 'playlist'
+  let PLAY_MODE = 'playlist'; // 'auto' | 'single' | 'playlist'
 
   audio.loop = true; // note: in playlist mode we override loop behavior per-track by listening to 'ended'
   audio.preload = 'auto';
@@ -689,5 +689,6 @@ const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
 
 </body>
 </html>
+
 
 
